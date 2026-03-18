@@ -1,0 +1,11 @@
+# Virtual environment
+.venv/
+
+# Maw runtime data (created per-folder when maw runs)
+.maw/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
