@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
-# Maw installer — Arch/EndeavourOS
+# Maw installer — Linux & macOS
 set -euo pipefail
+
+# Windows is not supported natively — use WSL
+if [[ "${OS:-}" == "Windows_NT" ]] || [[ "$(uname -s 2>/dev/null)" == MINGW* ]]; then
+    echo "Windows is not supported. Please use WSL (Windows Subsystem for Linux)."
+    echo "See: https://learn.microsoft.com/en-us/windows/wsl/install"
+    exit 1
+fi
+
+OS_TYPE="$(uname -s)"  # Linux or Darwin
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,6 +41,31 @@ echo ""
 echo -e "  ${BLUE}────────────────────────────────${NC}"
 echo ""
 
+# ── 0. macOS: Homebrew check ──────────────────────────────────────────────────
+if [[ "$OS_TYPE" == "Darwin" ]] && ! command -v brew &>/dev/null; then
+    hdr "0/5" "Homebrew not found..."
+    echo ""
+    echo "  Homebrew is the standard package manager for macOS."
+    echo "  Maw uses it to install Python and Ollama."
+    echo "  It will be installed to /opt/homebrew (Apple Silicon) or /usr/local (Intel)."
+    echo "  More info: https://brew.sh"
+    echo ""
+    read -r -p "  Install Homebrew? [Y/n] " choice
+    if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        # Add brew to PATH for the rest of this script
+        if [[ -f /opt/homebrew/bin/brew ]]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [[ -f /usr/local/bin/brew ]]; then
+            eval "$(/usr/local/bin/brew shellenv)"
+        fi
+        ok "Homebrew installed"
+    else
+        err "Homebrew is required on macOS. Exiting."
+        exit 1
+    fi
+fi
+
 # ── 1. Python check ───────────────────────────────────────────────────────────
 hdr "1/5" "Checking Python..."
 
@@ -50,9 +84,39 @@ for cmd in python3.13 python3.12 python3.11 python3.10 python3; do
 done
 
 if [ -z "$PYTHON" ]; then
-    err "Python 3.10+ is required but not found."
-    echo "  Install with: sudo pacman -S python"
-    exit 1
+    warn "Python 3.10+ not found."
+    if command -v pacman &>/dev/null; then
+        read -r -p "  Install Python via pacman? [Y/n] " choice
+        if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+            sudo pacman -S --noconfirm python && PYTHON="python3" && ok "Python installed"
+        else
+            err "Python 3.10+ is required. Exiting."; exit 1
+        fi
+    elif command -v apt-get &>/dev/null; then
+        read -r -p "  Install Python via apt? [Y/n] " choice
+        if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+            sudo apt-get install -y python3 && PYTHON="python3" && ok "Python installed"
+        else
+            err "Python 3.10+ is required. Exiting."; exit 1
+        fi
+    elif command -v dnf &>/dev/null; then
+        read -r -p "  Install Python via dnf? [Y/n] " choice
+        if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+            sudo dnf install -y python3 && PYTHON="python3" && ok "Python installed"
+        else
+            err "Python 3.10+ is required. Exiting."; exit 1
+        fi
+    elif command -v brew &>/dev/null; then
+        read -r -p "  Install Python via Homebrew? [Y/n] " choice
+        if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+            brew install python3 && PYTHON="python3" && ok "Python installed"
+        else
+            err "Python 3.10+ is required. Exiting."; exit 1
+        fi
+    else
+        err "Python 3.10+ is required. Install it from https://python.org"
+        exit 1
+    fi
 fi
 
 # ── 2. Ollama check ───────────────────────────────────────────────────────────
@@ -62,17 +126,47 @@ if command -v ollama &>/dev/null; then
     ok "Ollama found ($(ollama --version 2>/dev/null || echo 'version unknown'))"
 else
     warn "Ollama not found."
+    echo ""
+    echo "  Ollama runs AI models locally on your machine."
+    echo "  It is required for Maw to work."
+    echo ""
     if command -v pacman &>/dev/null; then
         read -r -p "  Install Ollama via pacman? [Y/n] " choice
         if [[ ! "$choice" =~ ^[Nn]$ ]]; then
-            sudo pacman -S --noconfirm ollama
-            ok "Ollama installed"
+            sudo pacman -S --noconfirm ollama && ok "Ollama installed"
         else
-            err "Ollama is required. Install it from https://ollama.com"
-            exit 1
+            err "Ollama is required. Exiting."; exit 1
+        fi
+    elif command -v brew &>/dev/null; then
+        read -r -p "  Install Ollama via Homebrew? [Y/n] " choice
+        if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+            brew install ollama && ok "Ollama installed"
+        else
+            err "Ollama is required. Exiting."; exit 1
+        fi
+    elif command -v apt-get &>/dev/null; then
+        read -r -p "  Install Ollama via official installer? [Y/n] " choice
+        if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+            curl -fsSL https://ollama.com/install.sh | sh && ok "Ollama installed"
+        else
+            err "Ollama is required. Exiting."; exit 1
+        fi
+    elif command -v dnf &>/dev/null; then
+        read -r -p "  Install Ollama via official installer? [Y/n] " choice
+        if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+            curl -fsSL https://ollama.com/install.sh | sh && ok "Ollama installed"
+        else
+            err "Ollama is required. Exiting."; exit 1
+        fi
+    elif command -v curl &>/dev/null; then
+        read -r -p "  Install Ollama via official installer? [Y/n] " choice
+        if [[ ! "$choice" =~ ^[Nn]$ ]]; then
+            curl -fsSL https://ollama.com/install.sh | sh && ok "Ollama installed"
+        else
+            err "Ollama is required. Exiting."; exit 1
         fi
     else
-        err "Cannot auto-install (no pacman). Install Ollama from https://ollama.com"
+        err "Cannot install Ollama. Install it from https://ollama.com"
         exit 1
     fi
 fi
@@ -82,13 +176,14 @@ if curl -sf http://localhost:11434 &>/dev/null; then
     ok "Ollama is already running"
 else
     info "Ollama is not running. Attempting to start it..."
-    if systemctl is-enabled ollama &>/dev/null 2>&1; then
+    if [[ "$OS_TYPE" == "Darwin" ]]; then
+        ollama serve &>/dev/null &
+        sleep 3
+    elif systemctl is-enabled ollama &>/dev/null 2>&1; then
         sudo systemctl start ollama
         sleep 2
     else
-        # Start in background for the duration of this install
         ollama serve &>/dev/null &
-        OLLAMA_PID=$!
         sleep 3
         info "To run Ollama automatically: sudo systemctl enable --now ollama"
     fi
@@ -151,8 +246,13 @@ fi
 hdr "4/5" "Model selection..."
 
 # Detect available RAM
-RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-RAM_GB=$((RAM_KB / 1024 / 1024))
+if [[ "$OS_TYPE" == "Darwin" ]]; then
+    RAM_BYTES=$(sysctl -n hw.memsize)
+    RAM_GB=$((RAM_BYTES / 1024 / 1024 / 1024))
+else
+    RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    RAM_GB=$((RAM_KB / 1024 / 1024))
+fi
 info "System RAM: ~${RAM_GB}GB"
 echo ""
 
@@ -216,7 +316,11 @@ else
 fi
 
 # Write the chosen model into agent.py
-sed -i "s/^MODEL = .*/MODEL = \"$MODEL\"/" "$MAW_DIR/agent.py"
+if [[ "$OS_TYPE" == "Darwin" ]]; then
+    sed -i '' "s/^MODEL = .*/MODEL = \"$MODEL\"/" "$MAW_DIR/agent.py"
+else
+    sed -i "s/^MODEL = .*/MODEL = \"$MODEL\"/" "$MAW_DIR/agent.py"
+fi
 ok "Set agent to use model: $MODEL"
 
 # ── 5. Install global command ─────────────────────────────────────────────────

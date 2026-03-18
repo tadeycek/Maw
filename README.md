@@ -2,6 +2,8 @@
 
 A local AI file agent that runs in your terminal. Manages files, runs commands, and remembers context — powered entirely by Ollama (no cloud, no API keys).
 
+Supports Linux and macOS. Windows users need [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).
+
 ```
   ███╗   ███╗ █████╗ ██╗    ██╗
   ████╗ ████║██╔══██╗██║    ██║
@@ -10,11 +12,6 @@ A local AI file agent that runs in your terminal. Manages files, runs commands, 
   ██║ ╚═╝ ██║██║  ██║╚███╔███╔╝
   ╚═╝     ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝
 ```
-
-## Requirements
-
-- Python 3.10+
-- [Ollama](https://ollama.com) installed and running
 
 ## Install
 
@@ -25,9 +22,8 @@ bash install.sh
 ```
 
 The installer will:
-- Check Python and Ollama
-- Create a virtual environment
-- Install dependencies
+- Install Python and Ollama if not already present
+- Create a virtual environment and install dependencies
 - Optionally install RAG memory support (chromadb + sentence-transformers, ~500MB)
 - Let you pick a model based on your available RAM
 - Install a `maw` command to `~/.local/bin`
