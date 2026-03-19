@@ -338,6 +338,13 @@ ok "Created $BIN_DIR/maw"
 
 # Add ~/.local/bin to PATH if it's not already there
 PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
+
+# On macOS, zsh is the default shell — create ~/.zshrc if it doesn't exist
+if [[ "$OS_TYPE" == "Darwin" ]] && [ ! -f "$HOME/.zshrc" ]; then
+    touch "$HOME/.zshrc"
+    ok "Created ~/.zshrc"
+fi
+
 for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
     if [ -f "$rc" ]; then
         if grep -q ".local/bin" "$rc"; then
