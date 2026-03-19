@@ -29,9 +29,9 @@ The installer handles everything:
 - Creates a virtual environment and installs dependencies
 - Optionally installs RAG memory support (chromadb + sentence-transformers, ~500MB)
 - Lets you pick from 21 models based on your available RAM
-- Adds a `maw` command to `~/.local/bin`
+- Adds `maw` and `watch-diff` commands to `~/.local/bin`
 
-No need to activate a virtual environment — the `maw` command handles it automatically.
+No need to activate a virtual environment — both commands handle it automatically.
 
 ---
 
@@ -70,6 +70,35 @@ Examples of things you can ask:
 > find all TODO comments and list them
 > rename every file that starts with "draft_" to remove the prefix
 > run the tests and tell me what failed
+```
+
+---
+
+## watch-diff
+
+`watch-diff` ships alongside Maw and is installed by the same script. It watches files or directories for changes and streams a live unified diff in a rich terminal UI — no cloud, no config.
+
+```bash
+watch-diff ./src              # watch a whole directory
+watch-diff agent.py           # watch a single file
+watch-diff . --ext .py .ts    # filter by extension
+watch-diff . --ignore tests/  # exclude a path pattern
+```
+
+The terminal UI updates in real time as files change:
+
+```
+┌─────────────────────────────────┐
+│ status bar: filename  +N  −N    │
+│ progress bar (streaming %)      │
+├─────────────────────────────────┤
+│ diff pane  (streams line by line│
+│  + green added  − red removed)  │
+├─────────────────────────────────┤
+│ last changed file — full view   │
+├─────────────────────────────────┤
+│ history: [file1] [file2] ...    │
+└─────────────────────────────────┘
 ```
 
 ---

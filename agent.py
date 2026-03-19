@@ -4,6 +4,7 @@ Maw — a local AI file agent powered by Ollama.
 Runs in any folder, manages files, runs commands, and remembers context.
 """
 
+import difflib
 import os
 import sys
 import json
@@ -17,9 +18,16 @@ from pathlib import Path
 import requests
 from rich.console import Console
 from rich.panel import Panel
+from rich.text import Text
 from prompt_toolkit import prompt as pt_prompt
+from prompt_toolkit.application import Application
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style as PtStyle
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -30,6 +38,7 @@ MAW_DIR = Path(".maw")
 HISTORY_FILE = MAW_DIR / "history.json"
 MAX_TOOL_ITERATIONS = 10          # guard against infinite tool loops
 MAX_FILE_CHARS = 4000             # truncate large files before sending to model
+MODEL_TIMEOUT = 600               # seconds — increase for large/slow models (e.g. 30B on CPU)
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml",
     ".toml", ".ini", ".cfg", ".sh", ".css", ".html", ".xml", ".csv",
@@ -44,9 +53,10 @@ SYSTEM_PROMPT = """You are Maw, a local AI file agent. You help users manage fil
 
 RULES:
 - When you need to use a tool, respond with ONLY the raw JSON — no words before or after it.
-- After a [Tool result] is given to you, use it to continue working or give a final plain-text answer.
-- Never narrate what you are about to do. Just do it.
-- Only use plain text when no tool is needed (e.g. answering questions).
+- After a [Tool result] is given to you, use it to continue working or call the next tool.
+- When ALL tasks are done and no more tools are needed, write a SHORT plain-text explanation of what you did. Never output raw JSON as your final message.
+- Do NOT narrate what you are about to do — just do it, then explain after.
+- [Context from local files] blocks are background information only. Do NOT use tools on them unless the user explicitly asks.
 
 TOOLS:
 {"action": "create_file", "filename": "name.txt", "content": "file content here"}
@@ -64,7 +74,11 @@ user: read hello.txt and rewrite it in uppercase
 [Tool result]: hello world
 → {"action": "create_file", "filename": "hello.txt", "content": "HELLO WORLD"}
 [Tool result]: Created hello.txt
-→ Done. Rewrote hello.txt in uppercase."""
+→ Rewrote hello.txt in uppercase.
+
+EXAMPLE — greeting:
+user: hey
+→ Hey! What can I help you with?"""
 
 # ── RAG Memory ────────────────────────────────────────────────────────────────
 # Uses chromadb (vector store) + sentence-transformers (local embeddings).
@@ -158,6 +172,8 @@ def _index_all_files() -> None:
             _index_file(path)
 
 
+RAG_DISTANCE_THRESHOLD = 1.0  # chromadb cosine distance; lower = more similar
+
 def memory_query(query: str, n: int = 3) -> str:
     """Return the most relevant file snippets for a query, or '' if RAG is off."""
     if not _rag_enabled or _collection.count() == 0:
@@ -166,10 +182,16 @@ def memory_query(query: str, n: int = 3) -> str:
         results = _collection.query(
             query_embeddings=[_embed(query)],
             n_results=min(n, _collection.count()),
+            include=["documents", "metadatas", "distances"],
         )
         parts = []
-        for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
-            parts.append(f"[{meta['filename']}]:\n{doc[:500]}")
+        for doc, meta, dist in zip(
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0],
+        ):
+            if dist <= RAG_DISTANCE_THRESHOLD:
+                parts.append(f"[{meta['filename']}]:\n{doc[:500]}")
         return "\n\n".join(parts)
     except Exception:
         return ""
@@ -195,12 +217,59 @@ def save_history() -> None:
     HISTORY_FILE.write_text(json.dumps(history, indent=2))
 
 
+# ── Diff renderer ─────────────────────────────────────────────────────────────
+
+DIFF_SHOW_THRESHOLD = 30  # hide full diff when changed lines exceed this
+
+def _print_diff(old_lines: list[str], new_lines: list[str], filename: str) -> None:
+    """Render a unified diff inline in the conversation."""
+    diff = list(difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{filename}",
+        tofile=f"b/{filename}",
+        lineterm="",
+    ))
+    if not diff:
+        return
+
+    adds = sum(1 for l in diff if l.startswith("+") and not l.startswith("+++"))
+    removes = sum(1 for l in diff if l.startswith("-") and not l.startswith("---"))
+
+    summary = Text()
+    summary.append(f" +{adds} ", style="bold bright_green")
+    summary.append(f"-{removes} ", style="bold bright_red")
+    summary.append(filename, style="dim")
+
+    if adds + removes >= DIFF_SHOW_THRESHOLD:
+        # Too many changes — just print the summary line, skip the full diff.
+        console.print(summary)
+        return
+
+    t = Text(no_wrap=True, overflow="fold")
+    for line in diff:
+        if line.startswith("@@"):
+            t.append(line, style="bold bright_blue")
+        elif line.startswith("+++") or line.startswith("---"):
+            t.append(line, style="dim white")
+        elif line.startswith("+"):
+            t.append(line, style="bright_green on #002210")
+        elif line.startswith("-"):
+            t.append(line, style="bright_red on #1a0000")
+        else:
+            t.append(line, style="dim white")
+        t.append("\n")
+
+    console.print(Panel(t, title=summary, border_style="dim", padding=(0, 0)))
+
+
 # ── Tool implementations ──────────────────────────────────────────────────────
 
 def tool_create_file(filename: str, content: str) -> str:
     path = Path(filename)
+    old_lines = path.read_text(errors="replace").splitlines(keepends=True) if path.exists() else []
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+    _print_diff(old_lines, content.splitlines(keepends=True), filename)
     _index_file(path)
     return f"Created {filename}"
 
@@ -219,7 +288,9 @@ def tool_delete_file(filename: str) -> str:
     path = Path(filename)
     if not path.exists():
         return f"Error: {filename} does not exist"
+    old_lines = path.read_text(errors="replace").splitlines(keepends=True)
     path.unlink()
+    _print_diff(old_lines, [], filename)
     _remove_from_index(filename)
     return f"Deleted {filename}"
 
@@ -239,7 +310,10 @@ def tool_edit_file(filename: str, find: str, replace: str) -> str:
     content = path.read_text(errors="replace")
     if find not in content:
         return f"Error: text not found in {filename}"
-    path.write_text(content.replace(find, replace, 1))
+    old_lines = content.splitlines(keepends=True)
+    new_content = content.replace(find, replace, 1)
+    path.write_text(new_content)
+    _print_diff(old_lines, new_content.splitlines(keepends=True), filename)
     _index_file(path)
     return f"Edited {filename}"
 
@@ -277,6 +351,18 @@ def tool_run_command(command: str) -> str:
 
 
 # ── Tool dispatch ─────────────────────────────────────────────────────────────
+
+# Human-readable label + the key whose value names the target (or None)
+ACTION_LABELS: dict[str, tuple[str, Optional[str]]] = {
+    "create_file":   ("Creating",       "filename"),
+    "read_file":     ("Reading",        "filename"),
+    "delete_file":   ("Deleting",       "filename"),
+    "list_files":    ("Listing files",  None),
+    "edit_file":     ("Editing",        "filename"),
+    "create_folder": ("Creating folder","path"),
+    "move_file":     ("Moving",         "src"),
+    "run_command":   ("Running",        "command"),
+}
 
 TOOLS = {
     "create_file":   lambda d: tool_create_file(d["filename"], d["content"]),
@@ -330,6 +416,20 @@ def extract_json(text: str) -> Optional[dict]:
     return None
 
 
+def _is_malformed_tool_reply(reply: str) -> bool:
+    """
+    Return True when the model's 'final' reply is actually a garbled tool call
+    (e.g. pure JSON, or action-name + JSON without the action key inside).
+    """
+    stripped = reply.strip()
+    if stripped.startswith("{"):
+        return True
+    for action in TOOLS:
+        if action in stripped and "{" in stripped:
+            return True
+    return False
+
+
 def try_dispatch(reply: str) -> Optional[str]:
     """
     If the reply contains a tool JSON, execute it and return the result.
@@ -343,10 +443,12 @@ def try_dispatch(reply: str) -> Optional[str]:
     if action not in TOOLS:
         return None
 
-    args_str = ", ".join(
-        f"{k}={repr(v)[:40]}" for k, v in data.items() if k != "action"
-    )
-    console.print(f"[dim]  ⚙ {action}({args_str})[/dim]")
+    label, target_key = ACTION_LABELS.get(action, (action, None))
+    target = data.get(target_key, "") if target_key else ""
+    if target:
+        console.print(f"[dim]  ↳ {label} [bold]{target}[/bold][/dim]")
+    else:
+        console.print(f"[dim]  ↳ {label}[/dim]")
 
     try:
         return TOOLS[action](data)
@@ -362,7 +464,7 @@ def call_model(messages: list[dict]) -> str:
         resp = requests.post(
             OLLAMA_URL,
             json={"model": MODEL, "messages": messages, "stream": False},
-            timeout=120,
+            timeout=MODEL_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()["message"]["content"]
@@ -373,7 +475,7 @@ def call_model(messages: list[dict]) -> str:
         )
         sys.exit(1)
     except requests.exceptions.Timeout:
-        return "Error: model timed out (120s)"
+        return f"Error: model timed out ({MODEL_TIMEOUT}s)"
     except Exception as e:
         return f"Error calling model: {e}"
 
@@ -414,12 +516,27 @@ def run_turn(user_input: str) -> None:
         tool_result = try_dispatch(reply)
 
         if tool_result is None:
-            # Model gave a plain-text response — we're done with this turn.
-            console.print(Panel(
-                reply.strip(),
-                border_style="bright_black",
-                padding=(0, 1),
-            ))
+            # If the model output raw JSON instead of a plain-text explanation,
+            # ask it to explain in plain text instead of showing the JSON.
+            if _is_malformed_tool_reply(reply):
+                history.append({
+                    "role": "user",
+                    "content": "Summarize in plain text what you just did.",
+                })
+                messages2 = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+                follow_up = call_model(messages2)
+                history.append({"role": "assistant", "content": follow_up})
+                console.print(Panel(
+                    follow_up.strip(),
+                    border_style="bright_black",
+                    padding=(0, 1),
+                ))
+            else:
+                console.print(Panel(
+                    reply.strip(),
+                    border_style="bright_black",
+                    padding=(0, 1),
+                ))
             break
         else:
             # Feed the tool result back so the model can continue.
@@ -430,6 +547,141 @@ def run_turn(user_input: str) -> None:
         console.print("[yellow]maw > reached max tool steps, stopping.[/yellow]\n")
 
     save_history()
+
+
+# ── /model command ────────────────────────────────────────────────────────────
+
+KNOWN_MODELS: list[tuple[str, str, str]] = [
+    ("tinyllama:1.1b",    "638MB",  "ultra-fast, minimal RAM"),
+    ("gemma2:2b",         "1.6GB",  "Google's fast small model"),
+    ("llama3.2:3b",       "2.0GB",  "Meta's capable 3B"),
+    ("phi3:mini",         "2.2GB",  "strong at coding & reasoning"),
+    ("qwen2.5:3b",        "2.0GB",  "great multilingual support"),
+    ("mistral:7b",        "4.1GB",  "fast, great all-rounder"),
+    ("qwen2.5:7b",        "4.4GB",  "excellent multilingual"),
+    ("llama3.1:8b",       "4.7GB",  "Meta's best 8B"),
+    ("deepseek-r1:8b",    "4.9GB",  "strong reasoning model"),
+    ("gemma2:9b",         "5.5GB",  "Google's solid mid-size"),
+    ("mistral-nemo:12b",  "7.1GB",  "Mistral's efficient 12B"),
+    ("codellama:13b",     "7.4GB",  "code-focused"),
+    ("qwen2.5:14b",       "8.9GB",  "very capable, great reasoning"),
+    ("phi4:14b",          "8.5GB",  "Microsoft's strong 14B"),
+    ("deepseek-r1:14b",   "9.0GB",  "advanced reasoning"),
+    ("gemma2:27b",        "16GB",   "Google's large capable model"),
+    ("codestral:22b",     "12.9GB", "Mistral's code specialist"),
+    ("qwen2.5:32b",       "19GB",   "Qwen's most powerful"),
+    ("deepseek-r1:32b",   "19GB",   "top-tier reasoning"),
+    ("mixtral:8x7b",      "26GB",   "mixture-of-experts powerhouse"),
+    ("qwen2.5-coder:32b", "19GB",   "Qwen's dedicated code model"),
+    ("qwen2.5-coder:14b", "9.0GB",  "coder 14B — fast on 16GB RAM"),
+]
+
+
+def _pick(items: list[tuple[str, str]], header: str = "") -> Optional[str]:
+    """
+    Inline arrow-key picker. Items are (value, meta_text) pairs.
+    Returns the selected value, or None if cancelled.
+    """
+    idx = [0]
+    chosen: list[Optional[str]] = [None]
+
+    def render() -> FormattedText:
+        out: list[tuple[str, str]] = []
+        if header:
+            out.append(("bold ansiwhite", f"\n  {header}\n\n"))
+        for i, (name, meta) in enumerate(items):
+            if i == idx[0]:
+                out.append(("bold fg:ansibrightblue", f"  ▶  {name:<26}"))
+                if meta:
+                    out.append(("fg:ansiblue", f"  {meta}"))
+                out.append(("", "\n"))
+            else:
+                out.append(("fg:ansiblue", f"     {name}\n"))
+        out.append(("fg:#555555", "\n  ↑↓ navigate  ·  Enter select  ·  Esc cancel\n"))
+        return FormattedText(out)
+
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _up(e):
+        idx[0] = (idx[0] - 1) % len(items)
+
+    @kb.add("down")
+    def _down(e):
+        idx[0] = (idx[0] + 1) % len(items)
+
+    @kb.add("enter")
+    def _enter(e):
+        chosen[0] = items[idx[0]][0]
+        e.app.exit()
+
+    @kb.add("escape")
+    @kb.add("c-c")
+    def _cancel(e):
+        e.app.exit()
+
+    Application(
+        layout=Layout(Window(FormattedTextControl(render, focusable=True))),
+        key_bindings=kb,
+        full_screen=False,
+        mouse_support=False,
+    ).run()
+
+    return chosen[0]
+
+
+def _ollama_list() -> list[str]:
+    """Return names of installed Ollama models."""
+    try:
+        result = subprocess.run(
+            ["ollama", "list"], capture_output=True, text=True, timeout=10
+        )
+        lines = result.stdout.strip().splitlines()[1:]  # skip header row
+        return [l.split()[0] for l in lines if l.strip()]
+    except Exception:
+        return []
+
+
+def cmd_model(arg: str) -> None:
+    global MODEL
+
+    # ── /model install ────────────────────────────────────────────────────────
+    if arg == "install":
+        installed = _ollama_list()
+        items = [
+            (name, f"{size:<7}  {desc}" + ("  ✓" if name in installed else ""))
+            for name, size, desc in KNOWN_MODELS
+        ]
+        target = _pick(items, "Install model  (↑↓ · Enter)")
+        if not target:
+            return
+        console.print(f"\n[dim]  Pulling {target}…[/dim]\n")
+        try:
+            subprocess.run(["ollama", "pull", target], check=True)
+            console.print(f"\n[green]  ✓  {target} installed[/green]")
+            MODEL = target
+            console.print(f"[dim]  Switched to {MODEL}[/dim]\n")
+        except subprocess.CalledProcessError:
+            console.print(f"[red]  Failed to pull {target}[/red]\n")
+        return
+
+    # ── /model (no arg) — pick from installed ────────────────────────────────
+    if not arg:
+        installed = _ollama_list()
+        if not installed:
+            console.print("[yellow]  No models found — is Ollama running?[/yellow]\n")
+            return
+        items = [(m, "← active" if m == MODEL else "") for m in installed]
+        # pre-select the active model
+        chosen = _pick(items, "Switch model  (↑↓ · Enter)")
+        if chosen:
+            MODEL = chosen
+            console.print(f"[green]  Switched to [bold]{MODEL}[/bold][/green]\n")
+        return
+
+    # ── /model <name> — switch directly ──────────────────────────────────────
+    MODEL = arg
+    console.print(f"[green]  Switched to [bold]{MODEL}[/bold] for this session.[/green]\n")
 
 
 # ── CLI commands ──────────────────────────────────────────────────────────────
@@ -497,11 +749,37 @@ def main() -> None:
     load_history()
     init_rag()
 
+    console.clear()
+    console.print("[bold blue]  ███╗   ███╗ █████╗ ██╗    ██╗[/bold blue]")
+    console.print("[bold blue]  ████╗ ████║██╔══██╗██║    ██║[/bold blue]")
+    console.print("[bold blue]  ██╔████╔██║███████║██║ █╗ ██║[/bold blue]")
+    console.print("[bold blue]  ██║╚██╔╝██║██╔══██║██║███╗██║[/bold blue]")
+    console.print("[bold blue]  ██║ ╚═╝ ██║██║  ██║╚███╔███╔╝[/bold blue]")
+    console.print("[bold blue]  ╚═╝     ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ [/bold blue]")
     folder = Path('.').resolve().name
     console.print(
-        f"\n[bold white]Maw[/bold white] [dim]({MODEL} · {folder})[/dim]\n"
-        f"[dim]Ctrl+C to exit · maw reset to clear memory[/dim]\n"
+        f"\n  [bold white]local AI file agent[/bold white]  ·  [dim]{MODEL} · {folder}[/dim]\n"
+        f"  [dim]Ctrl+C to exit · maw reset to clear memory[/dim]\n"
     )
+
+    # ── Slash-command completer ───────────────────────────────────────────────
+    class SlashCompleter(Completer):
+        _commands = [
+            ("/model",         "list installed models / switch active model"),
+            ("/model install", "browse and install a new model"),
+        ]
+
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            if not text.startswith("/"):
+                return
+            for cmd, meta in self._commands:
+                if cmd.startswith(text):
+                    yield Completion(
+                        cmd[len(text):],
+                        display=cmd,
+                        display_meta=meta,
+                    )
 
     # ── prompt_toolkit setup ──────────────────────────────────────────────────
     kb = KeyBindings()
@@ -516,6 +794,14 @@ def main() -> None:
 
     pt_style = PtStyle.from_dict({
         "prompt": "bold ansicyan",
+        # Completion dropdown — transparent background, Maw blue text
+        "completion-menu":                        "bg:default",
+        "completion-menu.completion":             "fg:ansiblue bg:default",
+        "completion-menu.completion.current":     "fg:ansibrightblue bg:default bold",
+        "completion-menu.meta.completion":        "fg:ansiblue bg:default",
+        "completion-menu.meta.completion.current":"fg:ansibrightblue bg:default",
+        "scrollbar.background":                   "bg:default",
+        "scrollbar.button":                       "bg:ansiblue",
     })
     _history = InMemoryHistory()
 
@@ -526,8 +812,13 @@ def main() -> None:
                 history=_history,
                 key_bindings=kb,
                 style=pt_style,
+                completer=SlashCompleter(),
+                complete_while_typing=True,
             ).strip()
             if not user_input:
+                continue
+            if user_input.startswith("/model"):
+                cmd_model(user_input[len("/model"):].strip())
                 continue
             run_turn(user_input)
         except KeyboardInterrupt:

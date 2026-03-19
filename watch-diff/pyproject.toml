@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "watch-diff"
+version = "0.1.0"
+description = "Watch files for changes and stream unified diffs in a rich terminal UI"
+requires-python = ">=3.9"
+dependencies = [
+    "watchdog>=4.0",
+    "rich>=13.0",
+    "click>=8.0",
+]
+
+[project.scripts]
+watch-diff = "watch_diff.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["watch_diff"]

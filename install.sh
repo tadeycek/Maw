@@ -209,9 +209,13 @@ ok "Virtual environment ready at $VENV_DIR"
 info "Upgrading pip..."
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
 
-info "Installing core packages (requests, rich, prompt_toolkit)..."
-"$VENV_DIR/bin/pip" install --quiet requests rich prompt_toolkit
+info "Installing core packages (requests, rich, prompt_toolkit, click, watchdog)..."
+"$VENV_DIR/bin/pip" install --quiet requests rich prompt_toolkit click watchdog
 ok "Core packages installed"
+
+info "Installing watch-diff..."
+"$VENV_DIR/bin/pip" install --quiet -e "$MAW_DIR/watch-diff"
+ok "watch-diff installed"
 
 echo ""
 echo "  RAG memory (per-folder file indexing) requires:"
@@ -280,6 +284,7 @@ DEFAULTS=(
     "deepseek-r1:32b"    # 19
     "mixtral:8x7b"       # 20
     "qwen2.5-coder:32b"  # 21
+    "qwen2.5-coder:14b"  # 22
 )
 
 # Recommended model based on available RAM
@@ -333,6 +338,7 @@ printf "  │  [18] %-16s  %-7s  %-28s│\n" "qwen2.5:32b"     "19GB"   "Qwen's 
 printf "  │  [19] %-16s  %-7s  %-28s│\n" "deepseek-r1:32b" "19GB"   "top-tier reasoning           $(_rec 19)"
 printf "  │  [20] %-16s  %-7s  %-28s│\n" "mixtral:8x7b"       "26GB"   "mixture-of-experts powerhouse$(_rec 20)"
 printf "  │  [21] %-16s  %-7s  %-28s│\n" "qwen2.5-coder:32b"  "19GB"   "Qwen's dedicated code model  $(_rec 21)"
+printf "  │  [22] %-16s  %-7s  %-28s│\n" "qwen2.5-coder:14b"  "9.0GB"  "coder 14B — fast on 16GB RAM $(_rec 22)"
 echo "  └──────────────────────────────────────────────────────────────────────┘"
 echo ""
 echo "  Recommended for your system (~${RAM_GB}GB RAM): [${REC_IDX}] $DEFAULT_MODEL"
@@ -348,11 +354,11 @@ else
 fi
 echo ""
 
-read -r -p "  Enter number [1–21] or model name [default: $DEFAULT_MODEL]: " model_choice
+read -r -p "  Enter number [1–22] or model name [default: $DEFAULT_MODEL]: " model_choice
 
 if [[ -z "$model_choice" ]]; then
     MODEL="$DEFAULT_MODEL"
-elif [[ "$model_choice" =~ ^([1-9]|1[0-9]|2[01])$ ]]; then
+elif [[ "$model_choice" =~ ^([1-9]|1[0-9]|2[012])$ ]]; then
     MODEL="${DEFAULTS[$model_choice]}"
 else
     MODEL="$model_choice"
@@ -389,6 +395,14 @@ WRAPPER
 chmod +x "$BIN_DIR/maw"
 ok "Created $BIN_DIR/maw"
 
+cat > "$BIN_DIR/watch-diff" << WRAPPER
+#!/usr/bin/env bash
+exec "$VENV_DIR/bin/watch-diff" "\$@"
+WRAPPER
+
+chmod +x "$BIN_DIR/watch-diff"
+ok "Created $BIN_DIR/watch-diff"
+
 # Add ~/.local/bin to PATH if it's not already there
 PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
 
@@ -423,6 +437,12 @@ else
     warn "Something may be off. Test manually: $VENV_DIR/bin/python $MAW_DIR/agent.py --help"
 fi
 
+if "$VENV_DIR/bin/watch-diff" --help &>/dev/null; then
+    ok "watch-diff runs correctly"
+else
+    warn "watch-diff may not have installed correctly. Try: $VENV_DIR/bin/pip install -e $MAW_DIR/watch-diff"
+fi
+
 echo ""
 echo -e "  ${BOLD}Next steps:${NC}"
 
@@ -433,6 +453,7 @@ fi
 echo "    maw                    # start Maw in any folder"
 echo "    maw --help             # show help"
 echo "    maw reset              # wipe memory for the current folder"
+echo "    watch-diff ./src       # stream file diffs in a rich terminal UI"
 echo ""
 echo -e "  ${BOLD}Tip:${NC} Run 'maw' from any project folder — it scopes itself there."
 echo ""
