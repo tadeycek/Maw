@@ -256,34 +256,86 @@ fi
 info "System RAM: ~${RAM_GB}GB"
 echo ""
 
+# Model list indexed 1–20 (index 0 unused)
+DEFAULTS=(
+    ""
+    "tinyllama:1.1b"     #  1  — 0–5B
+    "gemma2:2b"          #  2
+    "llama3.2:3b"        #  3
+    "phi3:mini"          #  4
+    "qwen2.5:3b"         #  5
+    "mistral:7b"         #  6  — 5–10B
+    "qwen2.5:7b"         #  7
+    "llama3.1:8b"        #  8
+    "deepseek-r1:8b"     #  9
+    "gemma2:9b"          # 10
+    "mistral-nemo:12b"   # 11  — 10–20B
+    "codellama:13b"      # 12
+    "qwen2.5:14b"        # 13
+    "phi4:14b"           # 14
+    "deepseek-r1:14b"    # 15
+    "gemma2:27b"         # 16  — 20–30B
+    "codestral:22b"      # 17
+    "qwen2.5:32b"        # 18
+    "deepseek-r1:32b"    # 19
+    "mixtral:8x7b"       # 20
+    "qwen2.5-coder:32b"  # 21
+)
+
+# Recommended model based on available RAM
 if [ "$RAM_GB" -lt 8 ]; then
-    echo "  Models recommended for your system (<8GB RAM):"
-    echo "  ┌──────────────────────────────────────────────────────────────┐"
-    echo "  │  [1] llama3.2:3b     2.0GB  ← recommended                   │"
-    echo "  │  [2] phi3:mini       2.2GB  good at coding and reasoning     │"
-    echo "  │  [3] gemma2:2b       1.6GB  very fast, smallest              │"
-    echo "  └──────────────────────────────────────────────────────────────┘"
-    DEFAULTS=("llama3.2:3b" "phi3:mini" "gemma2:2b")
     DEFAULT_MODEL="llama3.2:3b"
+    REC_IDX=3
 elif [ "$RAM_GB" -lt 20 ]; then
-    echo "  Models recommended for your system (8–20GB RAM):"
-    echo "  ┌──────────────────────────────────────────────────────────────┐"
-    echo "  │  [1] llama3.1:8b     4.7GB  ← recommended, best quality     │"
-    echo "  │  [2] mistral:7b      4.1GB  fast, great all-rounder         │"
-    echo "  │  [3] llama3.2:3b     2.0GB  lighter, still good             │"
-    echo "  └──────────────────────────────────────────────────────────────┘"
-    DEFAULTS=("llama3.1:8b" "mistral:7b" "llama3.2:3b")
     DEFAULT_MODEL="llama3.1:8b"
+    REC_IDX=8
+elif [ "$RAM_GB" -lt 40 ]; then
+    DEFAULT_MODEL="qwen2.5:14b"
+    REC_IDX=13
 else
-    echo "  Models recommended for your system (20GB+ RAM):"
-    echo "  ┌──────────────────────────────────────────────────────────────┐"
-    echo "  │  [1] llama3.1:8b     4.7GB  ← reliable, fast                │"
-    echo "  │  [2] qwen2.5:14b     8.9GB  smarter, great for complex tasks │"
-    echo "  │  [3] mistral:7b      4.1GB  fast all-rounder                 │"
-    echo "  └──────────────────────────────────────────────────────────────┘"
-    DEFAULTS=("llama3.1:8b" "qwen2.5:14b" "mistral:7b")
-    DEFAULT_MODEL="llama3.1:8b"
+    DEFAULT_MODEL="qwen2.5:32b"
+    REC_IDX=18
 fi
+
+# Helper: mark the recommended model
+_rec() { [ "$1" -eq "$REC_IDX" ] && printf " ← recommended" || true; }
+
+echo "  ┌──────────────────────────────────────────────────────────────────────┐"
+echo "  │  0–5B  ·  needs ~1–4GB RAM                                           │"
+echo "  ├──────────────────────────────────────────────────────────────────────┤"
+printf "  │  [1]  %-16s  %-7s  %-28s│\n" "tinyllama:1.1b"  "638MB"  "ultra-fast, minimal RAM      $(_rec 1)"
+printf "  │  [2]  %-16s  %-7s  %-28s│\n" "gemma2:2b"       "1.6GB"  "Google's fast small model    $(_rec 2)"
+printf "  │  [3]  %-16s  %-7s  %-28s│\n" "llama3.2:3b"     "2.0GB"  "Meta's capable 3B            $(_rec 3)"
+printf "  │  [4]  %-16s  %-7s  %-28s│\n" "phi3:mini"       "2.2GB"  "strong at coding & reasoning $(_rec 4)"
+printf "  │  [5]  %-16s  %-7s  %-28s│\n" "qwen2.5:3b"      "2.0GB"  "great multilingual support   $(_rec 5)"
+echo "  ├──────────────────────────────────────────────────────────────────────┤"
+echo "  │  5–10B  ·  needs ~4–8GB RAM                                          │"
+echo "  ├──────────────────────────────────────────────────────────────────────┤"
+printf "  │  [6]  %-16s  %-7s  %-28s│\n" "mistral:7b"      "4.1GB"  "fast, great all-rounder      $(_rec 6)"
+printf "  │  [7]  %-16s  %-7s  %-28s│\n" "qwen2.5:7b"      "4.4GB"  "excellent multilingual       $(_rec 7)"
+printf "  │  [8]  %-16s  %-7s  %-28s│\n" "llama3.1:8b"     "4.7GB"  "Meta's best 8B               $(_rec 8)"
+printf "  │  [9]  %-16s  %-7s  %-28s│\n" "deepseek-r1:8b"  "4.9GB"  "strong reasoning model       $(_rec 9)"
+printf "  │  [10] %-16s  %-7s  %-28s│\n" "gemma2:9b"       "5.5GB"  "Google's solid mid-size      $(_rec 10)"
+echo "  ├──────────────────────────────────────────────────────────────────────┤"
+echo "  │  10–20B  ·  needs ~8–16GB RAM                                        │"
+echo "  ├──────────────────────────────────────────────────────────────────────┤"
+printf "  │  [11] %-16s  %-7s  %-28s│\n" "mistral-nemo:12b" "7.1GB" "Mistral's efficient 12B      $(_rec 11)"
+printf "  │  [12] %-16s  %-7s  %-28s│\n" "codellama:13b"   "7.4GB"  "code-focused                 $(_rec 12)"
+printf "  │  [13] %-16s  %-7s  %-28s│\n" "qwen2.5:14b"     "8.9GB"  "very capable, great reasoning$(_rec 13)"
+printf "  │  [14] %-16s  %-7s  %-28s│\n" "phi4:14b"        "8.5GB"  "Microsoft's strong 14B       $(_rec 14)"
+printf "  │  [15] %-16s  %-7s  %-28s│\n" "deepseek-r1:14b" "9.0GB"  "advanced reasoning           $(_rec 15)"
+echo "  ├──────────────────────────────────────────────────────────────────────┤"
+echo "  │  20–30B  ·  needs ~16–28GB RAM                                       │"
+echo "  ├──────────────────────────────────────────────────────────────────────┤"
+printf "  │  [16] %-16s  %-7s  %-28s│\n" "gemma2:27b"      "16GB"   "Google's large capable model $(_rec 16)"
+printf "  │  [17] %-16s  %-7s  %-28s│\n" "codestral:22b"   "12.9GB" "Mistral's code specialist    $(_rec 17)"
+printf "  │  [18] %-16s  %-7s  %-28s│\n" "qwen2.5:32b"     "19GB"   "Qwen's most powerful         $(_rec 18)"
+printf "  │  [19] %-16s  %-7s  %-28s│\n" "deepseek-r1:32b" "19GB"   "top-tier reasoning           $(_rec 19)"
+printf "  │  [20] %-16s  %-7s  %-28s│\n" "mixtral:8x7b"       "26GB"   "mixture-of-experts powerhouse$(_rec 20)"
+printf "  │  [21] %-16s  %-7s  %-28s│\n" "qwen2.5-coder:32b"  "19GB"   "Qwen's dedicated code model  $(_rec 21)"
+echo "  └──────────────────────────────────────────────────────────────────────┘"
+echo ""
+echo "  Recommended for your system (~${RAM_GB}GB RAM): [${REC_IDX}] $DEFAULT_MODEL"
 
 # Show already-downloaded models
 echo ""
@@ -296,14 +348,15 @@ else
 fi
 echo ""
 
-read -r -p "  Enter model name or [1/2/3] [default: $DEFAULT_MODEL]: " model_choice
+read -r -p "  Enter number [1–21] or model name [default: $DEFAULT_MODEL]: " model_choice
 
-case "$model_choice" in
-    "1"|"") MODEL="${DEFAULTS[0]}" ;;
-    "2")    MODEL="${DEFAULTS[1]}" ;;
-    "3")    MODEL="${DEFAULTS[2]}" ;;
-    *)      MODEL="$model_choice" ;;
-esac
+if [[ -z "$model_choice" ]]; then
+    MODEL="$DEFAULT_MODEL"
+elif [[ "$model_choice" =~ ^([1-9]|1[0-9]|2[01])$ ]]; then
+    MODEL="${DEFAULTS[$model_choice]}"
+else
+    MODEL="$model_choice"
+fi
 
 # Pull the model if not already present
 MODEL_BASE="${MODEL%%:*}"
