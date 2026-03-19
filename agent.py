@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import re
+from typing import Optional
 import shutil
 import subprocess
 import argparse
@@ -289,7 +290,7 @@ TOOLS = {
 }
 
 
-def try_dispatch(reply: str) -> str | None:
+def try_dispatch(reply: str) -> Optional[str]:
     """
     If the reply contains a tool JSON, execute it and return the result.
     Returns None if the reply is plain text (no tool call).
