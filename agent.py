@@ -290,29 +290,68 @@ TOOLS = {
 }
 
 
+def extract_json(text: str) -> Optional[dict]:
+    """
+    Find and parse the first valid JSON object in a model reply.
+    Handles markdown code fences and nested braces correctly.
+    """
+    # Strip markdown code fences
+    text = re.sub(r"```(?:json)?\s*", "", text).replace("```", "")
+
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i, ch in enumerate(text[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 def try_dispatch(reply: str) -> Optional[str]:
     """
     If the reply contains a tool JSON, execute it and return the result.
     Returns None if the reply is plain text (no tool call).
     """
-    match = re.search(r"\{.*\}", reply, re.DOTALL)
-    if not match:
+    data = extract_json(reply)
+    if data is None:
         return None
+
+    action = data.get("action")
+    if action not in TOOLS:
+        return None
+
+    args_str = ", ".join(
+        f"{k}={repr(v)[:40]}" for k, v in data.items() if k != "action"
+    )
+    console.print(f"[dim]  ⚙ {action}({args_str})[/dim]")
+
     try:
-        data = json.loads(match.group())
-        action = data.get("action")
-        if action not in TOOLS:
-            return None
-
-        # Show what tool is being called
-        args_str = ", ".join(
-            f"{k}={repr(v)[:40]}" for k, v in data.items() if k != "action"
-        )
-        console.print(f"[dim]  ⚙ {action}({args_str})[/dim]")
-
         return TOOLS[action](data)
-    except (json.JSONDecodeError, KeyError):
-        return None
+    except KeyError as e:
+        return f"Error: missing argument {e}"
 
 
 # ── Model call ────────────────────────────────────────────────────────────────
