@@ -202,7 +202,21 @@ hdr "3/5" "Setting up Python environment..."
 
 if [ ! -d "$VENV_DIR" ]; then
     info "Creating virtual environment..."
-    "$PYTHON" -m venv "$VENV_DIR"
+    if ! "$PYTHON" -m venv "$VENV_DIR" 2>/dev/null; then
+        # On Debian/Ubuntu, python3-venv may not be installed
+        PYTHON_VER=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        warn "Virtual environment creation failed. Attempting to install python${PYTHON_VER}-venv..."
+        if command -v apt-get &>/dev/null; then
+            sudo apt-get install -y "python${PYTHON_VER}-venv" || {
+                err "Could not install python${PYTHON_VER}-venv. Please run: sudo apt install python${PYTHON_VER}-venv"
+                exit 1
+            }
+            "$PYTHON" -m venv "$VENV_DIR"
+        else
+            err "Could not create virtual environment. Please ensure 'ensurepip' is available for your Python installation."
+            exit 1
+        fi
+    fi
 fi
 ok "Virtual environment ready at $VENV_DIR"
 
